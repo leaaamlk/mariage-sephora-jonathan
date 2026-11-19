@@ -11,7 +11,7 @@ type Guest = {
   table_id: string | null; seat_label: string | null; message: string | null; email: string | null; phone: string | null;
   checked_in_at?: string | null; checked_in_by?: string | null; checked_in_status?: 'oui' | 'non' | null;
 }
-type TableRow = { id: string; table_number: number; table_name: string | null; capacity: number; notes: string | null }
+type TableRow = { id: string; table_number: number; table_name: string | null; capacity: number; notes: string | null; position_x?: number | null; position_y?: number | null }
 const sideOptions = ['Jonathan','Église','Sephora','À classer']
 const norm = (s: string) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'')
 const displayName = (g: Guest) => `${g.first_name || ''} ${g.last_name || ''}`.trim() || g.envelope_name || 'Invité sans nom'
