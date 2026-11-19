@@ -160,7 +160,7 @@ export default function App() {
   const countPresent=guests.filter(g=>g.present).length
   const assigned=guests.filter(g=>g.table_id).length
 
-  if(!configured) return <div className="setup"><div className="setup-card"><Heart/><h1>Sephora & Jonathan</h1><p>Le site est prêt à être configuré.</p><p>Crée un fichier <code>.env</code> à partir de <code>.env.example</code>, puis ajoute l’URL Supabase et la clé publique du projet. Consulte <code>README.md</code>.</p></div></div>
+  if(!configured) return <div className="welcome"><div className="welcome-card"><div className="flourish">✧</div><Heart className="heart"/><p className="eyebrow">NOTRE MARIAGE</p><h1>Sephora <span>&</span> Jonathan</h1><p className="welcome-sub">Un jour, une histoire, une vie à deux</p><div className="welcome-divider">✦</div><h2>Bienvenue dans notre espace privé</h2><p>La connexion est momentanément indisponible. Merci de réessayer un peu plus tard.</p></div></div>
   if(!session) return <div className="welcome"><div className="welcome-card"><div className="flourish">✧</div><Heart className="heart"/><p className="eyebrow">NOTRE MARIAGE</p><h1>Sephora <span>&</span> Jonathan</h1><p className="welcome-sub">Un jour, une histoire, une vie à deux</p><div className="welcome-divider">✦</div><h2>Bienvenue dans votre espace privé</h2><form onSubmit={signIn}><input name="email" type="email" placeholder="Adresse e-mail" required/><input name="password" type="password" placeholder="Mot de passe" required/><button className="primary">Accéder à mon espace</button></form>{error&&<p className="error">{error}</p>}<small>Accès réservé aux personnes invitées.</small></div></div>
 
   return <div className="app">
