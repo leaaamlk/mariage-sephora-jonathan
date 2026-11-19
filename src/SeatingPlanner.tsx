@@ -1,0 +1,23 @@
+import { useState } from 'react'
+import './SeatingPlanner.css'
+type Guest={id:string;first_name:string;last_name:string;table_id:string|null;seat_label:string|null}
+type Table={id:string;table_number:number;table_name:string|null;capacity:number}
+type Props={tables:Table[];guests:Guest[];createTable:()=>void;updateTable:(id:string,patch:Partial<Table>)=>Promise<void>;deleteTable:(id:string)=>Promise<void>;assignGuest:(id:string,patch:Partial<Guest>)=>Promise<void>}
+export default function SeatingPlanner({tables,guests,createTable,updateTable,deleteTable,assignGuest}:Props){
+ const [selected,setSelected]=useState<string>('')
+ const [editing,setEditing]=useState<string>('')
+ const [draft,setDraft]=useState({number:'',name:'',capacity:'10'})
+ const active=tables.find(t=>t.id===selected)||tables[0]
+ const total=tables.reduce((n,t)=>n+t.capacity,0)
+ const occupied=guests.filter(g=>g.table_id&&tables.some(t=>t.id===g.table_id)).length
+ function startEdit(t:Table){setEditing(t.id);setDraft({number:String(t.table_number),name:t.table_name||'',capacity:String(t.capacity)})}
+ async function saveEdit(){if(!editing)return;const capacity=Number(draft.capacity),number=Number(draft.number);if(!Number.isInteger(capacity)||capacity<1||capacity>30||!Number.isInteger(number)||number<1){alert('Indique un numéro et entre 1 et 30 chaises.');return}await updateTable(editing,{table_number:number,table_name:draft.name||null,capacity});setEditing('')}
+ return <div className="planner">
+ <div className="planner-stats"><span><b>{tables.length}</b> tables</span><span><b>{total}</b> chaises</span><span><b>{occupied}</b> personnes placées</span><span><b>{Math.max(0,total-occupied)}</b> places disponibles</span></div>
+ <p className="planner-note">Vue illustrative de la Verrière 91 (ce n’est pas une photographie ni le plan officiel de la salle). Touchez une table pour modifier ses places.</p>
+ <div className="hall"><div className="hall-glass">LA VERRIÈRE 91 · VUE ILLUSTRATIVE</div><div className="hall-stage">ESPACE DES MARIÉS</div><div className="hall-floor">{tables.map(t=>{const people=guests.filter(g=>g.table_id===t.id);return <button type="button" key={t.id} onClick={()=>setSelected(t.id)} className={'round-table '+(active?.id===t.id?'active':'')} aria-label={`Table ${t.table_number}, ${t.capacity} chaises`}><span className="table-top"><b>{t.table_number}</b><small>{people.length}/{t.capacity}</small></span>{Array.from({length:Math.min(t.capacity,30)},(_,i)=>{const angle=(i/t.capacity)*Math.PI*2-Math.PI/2;return <span key={i} title={people[i]?`${people[i].first_name} ${people[i].last_name}`:'Chaise libre'} className={'chair '+(people[i]?'taken':'')} style={{left:`calc(50% + ${Math.cos(angle)*56}px)`,top:`calc(50% + ${Math.sin(angle)*56}px)`}}/>})}</button>})}{tables.length===0&&<p className="hall-empty">Créez votre première table pour voir les chaises apparaître.</p>}</div></div>
+ {active&&<div className="panel planner-detail"><div className="panel-head"><div><h3>Table {active.table_number}{active.table_name?' — '+active.table_name:''}</h3><p>{active.capacity} chaises · {guests.filter(g=>g.table_id===active.id).length} personnes placées</p></div><div className="actions"><button className="secondary" onClick={()=>startEdit(active)}>Modifier la table</button><button className="delete" onClick={async()=>{if(confirm(`Supprimer la table ${active.table_number} ? Les invités seront désaffectés.`)){await deleteTable(active.id);setSelected('')}}}>Supprimer</button></div></div>
+ {editing===active.id&&<div className="planner-edit"><label>Numéro<input type="number" min="1" value={draft.number} onChange={e=>setDraft({...draft,number:e.target.value})}/></label><label>Nom<input value={draft.name} onChange={e=>setDraft({...draft,name:e.target.value})}/></label><label>Chaises<input type="number" min="1" max="30" value={draft.capacity} onChange={e=>setDraft({...draft,capacity:e.target.value})}/></label><button className="primary" onClick={saveEdit}>Enregistrer</button><button className="secondary" onClick={()=>setEditing('')}>Annuler</button></div>}
+ <div className="planner-seats">{Array.from({length:active.capacity},(_,i)=>{const person=guests.find(g=>g.table_id===active.id&&g.seat_label===String(i+1));return <label key={i}>Chaise {i+1}<select value={person?.id||''} onChange={async e=>{if(person)await assignGuest(person.id,{table_id:null,seat_label:null});if(e.target.value)await assignGuest(e.target.value,{table_id:active.id,seat_label:String(i+1)})}}><option value="">Libre</option>{guests.filter(g=>!g.table_id||g.id===person?.id).map(g=><option key={g.id} value={g.id}>{g.first_name} {g.last_name}</option>)}</select></label>})}</div></div>}
+ </div>
+}
