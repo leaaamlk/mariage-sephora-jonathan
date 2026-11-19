@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Papa from 'papaparse'
-import { supabase, configured } from './supabase'
+import { weddingApi } from './weddingApi'
 import { Heart, Users, Search, Armchair, LayoutDashboard, LogOut, Upload, Plus, Trash2, RefreshCw, ShieldCheck, UserRound, FileUp, Download } from 'lucide-react'
 
 type Profile = { id: string; email: string; display_name: string | null; role: 'admin' | 'collaborator' }
@@ -16,7 +16,6 @@ const displayName = (g: Guest) => `${g.first_name || ''} ${g.last_name || ''}`.t
 
 export default function App() {
   const [pin,setPin] = useState('')
-  const [pinAccepted,setPinAccepted] = useState(false)
   const [pinError,setPinError] = useState('')
   const [session,setSession] = useState<any>(null)
   const [profile,setProfile] = useState<Profile|null>(null)
@@ -35,68 +34,28 @@ export default function App() {
   const [inviteRole,setInviteRole] = useState<'admin'|'collaborator'>('collaborator')
   const [csvBusy,setCsvBusy] = useState(false)
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({data}) => setSession(data.session))
-    const { data: listener } = supabase.auth.onAuthStateChange((_event,s) => setSession(s))
-    return () => listener.subscription.unsubscribe()
-  }, [])
-
-  useEffect(() => { if(session?.user) loadAll(); else {setProfile(null);setGuests([])} }, [session])
-  useEffect(() => {
-    if (!session?.user) return
-    const channel = supabase.channel('wedding-live-sync')
-      .on('postgres_changes',{event:'*',schema:'public',table:'guests'},()=>loadAll())
-      .on('postgres_changes',{event:'*',schema:'public',table:'wedding_tables'},()=>loadAll())
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [session])
-
+  async function api(action:string,params:Record<string,unknown>={}) {
+    const data=await weddingApi(pin,action,params)
+    if(data.error)throw new Error(data.error)
+    return data
+  }
   async function loadAll() {
-    setLoading(true); setError('')
-    const {data: p, error: pe} = await supabase.from('profiles').select('*').eq('id',session.user.id).single()
-    if(pe){setError('Ton compte est connecté, mais son profil n’est pas encore créé. Vérifie le guide de configuration.');setLoading(false);return}
-    setProfile(p as Profile)
-    const [{data:g,error:ge},{data:t,error:te},{data:plan}] = await Promise.all([
-      supabase.from('guests').select('*').order('last_name').order('first_name'),
-      supabase.from('wedding_tables').select('*').order('table_number'),
-      supabase.from('wedding_assets').select('storage_path').eq('asset_type','seating_plan').maybeSingle()
-    ])
-    if(ge) setError(ge.message); else setGuests((g||[]) as Guest[])
-    if(te) setError(te.message); else setTables((t||[]) as TableRow[])
-    if(plan?.storage_path) {
-      const {data: signed} = await supabase.storage.from('wedding-private').createSignedUrl(plan.storage_path, 60*60)
-      setPlanUrl(signed?.signedUrl || '')
-    } else setPlanUrl('')
-    setLoading(false)
+    setLoading(true);setError('')
+    try {const data=await api('load');setGuests(data.guests||[]);setTables(data.tables||[]);setPlanUrl(data.planUrl||'')}
+    catch(e){setError(String(e))}
+    finally{setLoading(false)}
   }
-
-  async function signIn(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault(); setError('')
-    if (!configured) { setError('La connexion à la base de données n’est pas encore activée.'); return }
-    const f = new FormData(e.currentTarget)
-    const {error} = await supabase.auth.signInWithPassword({email:String(f.get('email')),password:String(f.get('password'))})
-    if(error) setError(error.message)
+  async function enterPin(e:React.FormEvent<HTMLFormElement>){
+    e.preventDefault();setPinError('')
+    try{const data=await weddingApi(pin,'load');if(data.error)throw new Error(data.error);setGuests(data.guests||[]);setTables(data.tables||[]);setPlanUrl(data.planUrl||'');setProfile({id:'pin',email:'',display_name:'Administrateur',role:'admin'});setSession({user:{id:'pin',email:''}});}
+    catch(e){setPinError('Code incorrect ou connexion indisponible.')}
   }
-  async function signOut(){await supabase.auth.signOut();setPage('dashboard')}
-  const isAdmin = profile?.role === 'admin'
-
-  async function updateGuest(id:string, patch:Partial<Guest>) {
-    const {error} = await supabase.from('guests').update(patch).eq('id',id)
-    if(error) setError(error.message); else {setGuests(old=>old.map(g=>g.id===id?{...g,...patch}:g));setNotice('Modification enregistrée.')}
-  }
-  async function addGuest() {
-    const first = prompt('Prénom de l’invité'); if(first===null)return
-    const last = prompt('Nom de famille') || ''
-    if(!first.trim()) return
-    const {data,error} = await supabase.from('guests').insert({first_name:first.trim(),last_name:last.trim(),side:'À classer'}).select().single()
-    if(error)setError(error.message); else setGuests(old=>[...old,data as Guest])
-  }
-  async function deleteGuest(g:Guest) {
-    if(!confirm(`Supprimer ${displayName(g)} ?`))return
-    const {error}=await supabase.from('guests').delete().eq('id',g.id)
-    if(error)setError(error.message);else setGuests(old=>old.filter(x=>x.id!==g.id))
-  }
-  async function importCSV(file:File) {
+  async function signOut(){setSession(null);setProfile(null);setPin('');setPage('dashboard')}
+  const isAdmin = true
+  async function updateGuest(id:string,patch:Partial<Guest>){try{await api('updateGuest',{id,patch});setGuests(old=>old.map(g=>g.id===id?{...g,...patch}:g));setNotice('Modification enregistrée.')}catch(e){setError(String(e))}}
+  async function addGuest(){const first=prompt('Prénom de l’invité');if(first===null)return;const last=prompt('Nom de famille')||'';if(!first.trim())return;try{const r=await api('addGuest',{guest:{first_name:first.trim(),last_name:last.trim(),side:'À classer'}});setGuests(old=>[...old,r.data])}catch(e){setError(String(e))}}
+  async function deleteGuest(g:Guest){if(!confirm(`Supprimer ${displayName(g)} ?`))return;try{await api('deleteGuest',{id:g.id});setGuests(old=>old.filter(x=>x.id!==g.id))}catch(e){setError(String(e))}}
+  async function importCSV(file:File){
     setCsvBusy(true);setError('');setNotice('')
     Papa.parse<Record<string,string>>(file,{header:true,skipEmptyLines:true,complete:async result=>{
       const headers=result.meta.fields||[]
@@ -109,48 +68,27 @@ export default function App() {
       const envCol=find(['envelope'])
       const emailCol=find(['email'])
       const phoneCol=find(['phone'])
-      const map = new Map<string,any>()
+      const map=new Map<string,any>()
       for(const row of result.data){
-        const first=(row[firstCol||'']||'').trim(), last=(row[lastCol||'']||'').trim()
+        const first=(row[firstCol||'']||'').trim(),last=(row[lastCol||'']||'').trim()
         const envelope=(row[envCol||'']||'').trim()
         if(!first&&!last&&!envelope)continue
-        const key=norm((`${first} ${last}`).trim() || envelope)
-        if(!key)continue
+        const key=norm((`${first} ${last}`).trim()||envelope);if(!key)continue
         const rawSide=(row[sideCol||'']||'').toLowerCase()
         const side=rawSide.includes('jonathan')?'Jonathan':rawSide.includes('eglise')||rawSide.includes('église')?'Église':rawSide.includes('sephora')?'Sephora':'À classer'
-        const rsvp=(row[rsvpCol||'']||'').trim(), msg=(row[msgCol||'']||'').trim()
+        const rsvp=(row[rsvpCol||'']||'').trim(),msg=(row[msgCol||'']||'').trim()
         const present=/oui|yes|accept|present/i.test(rsvp)&&!/non|no|declin/i.test(rsvp)
-        const item={first_name:first,last_name:last,envelope_name:envelope||null,side,rsvp:rsvp||null,present,registered:true,message:msg||null,email:(row[emailCol||'']||'').trim()||null,phone:(row[phoneCol||'']||'').trim()||null}
-        if(!map.has(key))map.set(key,item)
+        if(!map.has(key))map.set(key,{first_name:first,last_name:last,envelope_name:envelope||null,side,rsvp:rsvp||null,present,registered:true,message:msg||null,email:(row[emailCol||'']||'').trim()||null,phone:(row[phoneCol||'']||'').trim()||null})
       }
-      const rows=[...map.values()]
-      const {error}=await supabase.from('guests').upsert(rows,{onConflict:'dedupe_key'})
-      if(error)setError(error.message);else{setNotice(`${rows.length} invités uniques importés ou actualisés.`);await loadAll()}
+      try{await api('importGuests',{rows:[...map.values()]});setNotice(`${map.size} invités importés.`);await loadAll()}catch(e){setError(String(e))}
       setCsvBusy(false)
     },error:err=>{setError(err.message);setCsvBusy(false)}})
   }
-  async function createTable() {
-    const n=Number(newTable.table_number), cap=Number(newTable.capacity)
-    if(!n||!cap)return
-    const {data,error}=await supabase.from('wedding_tables').insert({table_number:n,capacity:cap,table_name:newTable.table_name||null}).select().single()
-    if(error)setError(error.message);else{setTables(old=>[...old,data as TableRow].sort((a,b)=>a.table_number-b.table_number));setNewTable({table_number:'',capacity:'10',table_name:''})}
+  async function createTable(){const n=Number(newTable.table_number),cap=Number(newTable.capacity);if(!n||!cap)return;try{const r=await api('createTable',{table:{table_number:n,capacity:cap,table_name:newTable.table_name||null}});setTables(old=>[...old,r.data].sort((a,b)=>a.table_number-b.table_number));setNewTable({table_number:'',capacity:'10',table_name:''})}catch(e){setError(String(e))}}
+  async function uploadPlan(file:File){
+    try{const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));const r=await api('uploadPlan',{base64:btoa(binary),name:file.name,mime:file.type});setPlanUrl(r.planUrl||'');setNotice('Plan importé.')}catch(e){setError(String(e))}
   }
-  async function uploadPlan(file:File) {
-    if(!isAdmin)return
-    const path=`seating-plan/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`
-    const {error:upErr}=await supabase.storage.from('wedding-private').upload(path,file,{upsert:true})
-    if(upErr){setError(upErr.message);return}
-    const {data}=await supabase.storage.from('wedding-private').createSignedUrl(path,60*60*24*7)
-    const {error}=await supabase.from('wedding_assets').upsert({asset_type:'seating_plan',storage_path:path},{onConflict:'asset_type'})
-    if(error)setError(error.message);else{setPlanUrl(data?.signedUrl||'');setNotice('Plan de table importé.')}
-  }
-  async function invite() {
-    if(!inviteEmail.trim())return
-    const {data:{session:s}}=await supabase.auth.getSession()
-    const response=await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/invite-user`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${s?.access_token}`},body:JSON.stringify({email:inviteEmail,role:inviteRole})})
-    const body=await response.json()
-    if(!response.ok)setError(body.error||'Invitation impossible.');else{setNotice(`Invitation envoyée à ${inviteEmail}.`);setInviteEmail('')}
-  }
+  async function invite(){setError('Les invitations par e-mail ne sont pas utilisées avec le code partagé.')}
 
   const visibleGuests = useMemo(()=>guests.filter(g=>{
     const q=norm(query), matches=!q||norm(displayName(g)).includes(q)||norm(g.family_name||'').includes(q)
@@ -164,7 +102,7 @@ export default function App() {
   const countPresent=guests.filter(g=>g.present).length
   const assigned=guests.filter(g=>g.table_id).length
 
-  if(!session) return <div className="welcome"><div className="welcome-card"><div className="flourish">✧</div><Heart className="heart"/><p className="eyebrow">NOTRE MARIAGE</p><h1>Sephora <span>&</span> Jonathan</h1><p className="welcome-sub">Un jour, une histoire, une vie à deux</p><div className="welcome-divider">✦</div>{!pinAccepted?<><h2>Tapez votre code à 4 chiffres</h2><form onSubmit={e=>{e.preventDefault();if(pin==='1234'){setPinAccepted(true);setPinError('')}else setPinError('Code incorrect. Réessayez.')}}><input aria-label="Code à 4 chiffres" type="password" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{4}" maxLength={4} placeholder="••••" value={pin} onChange={e=>{setPin(e.target.value.replace(/\D/g,'').slice(0,4));setPinError('')}} required/><button className="primary" disabled={pin.length!==4}>Valider</button></form>{pinError&&<p className="error">{pinError}</p>}</>:<><h2>Bienvenue dans notre espace mariage</h2><p>Code accepté.</p><p className="welcome-sub">L’espace de gestion privé sera disponible après activation de la connexion sécurisée.</p><button className="primary" onClick={()=>{setPinAccepted(false);setPin('')}}>Retour</button></>}<small>Sephora & Jonathan</small></div></div>
+  if(!session) return <div className="welcome"><div className="welcome-card"><div className="flourish">✧</div><Heart className="heart"/><p className="eyebrow">NOTRE MARIAGE</p><h1>Sephora <span>&</span> Jonathan</h1><p className="welcome-sub">Un jour, une histoire, une vie à deux</p><div className="welcome-divider">✦</div><h2>Tapez votre code à 4 chiffres</h2><form onSubmit={enterPin}><input aria-label="Code à 4 chiffres" type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{4}" maxLength={4} placeholder="••••" value={pin} onChange={e=>{setPin(e.target.value.replace(/\D/g,'').slice(0,4));setPinError('')}} required/><button className="primary" disabled={pin.length!==4}>Valider</button></form>{pinError&&<p className="error">{pinError}</p>}<small>Sephora & Jonathan</small></div></div>
 
   return <div className="app">
     <aside className="sidebar"><div className="brand"><Heart/><div><b>Sephora & Jonathan</b><small>Espace mariage</small></div></div>
